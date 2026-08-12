@@ -1,0 +1,15 @@
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body { overflow: hidden; }
+canvas { display: block; }
+
+/*
+ * 場景清單改名標籤（ObjectListRow）的鍵盤焦點提示。純鍵盤或輔助科技的
+ * 使用者靠 Tab 走到這個控制項，必須看得出焦點停在哪一列，不能只有滑鼠
+ * hover 才有反應。用 :focus-visible 而不是 :focus，滑鼠點擊選取時
+ * 不會多一圈不必要的外框。
+ */
+.object-list-row__name:focus-visible {
+  outline: 2px solid var(--focus-8);
+  outline-offset: 2px;
+}
