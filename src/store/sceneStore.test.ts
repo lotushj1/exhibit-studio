@@ -126,44 +126,6 @@ describe('sceneStore', () => {
     expect(s().past.length).toBe(before)
   })
 
-  it('投影模式真的改變時標記切換中', () => {
-    expect(s().projectionTransitioning).toBe(false)
-
-    s().setProjection('orthographic')
-
-    expect(s().projection).toBe('orthographic')
-    expect(s().projectionTransitioning).toBe(true)
-  })
-
-  it('同一投影模式 setProjection 是 no-op，不重啟切換狀態', () => {
-    s().setProjection('orthographic')
-    s().finishProjectionTransition('orthographic')
-    const before = s()
-
-    s().setProjection('orthographic')
-
-    expect(s()).toBe(before)
-    expect(s().projectionTransitioning).toBe(false)
-  })
-
-  it('舊投影模式 completion 不得清掉目前新模式的切換狀態', () => {
-    s().setProjection('orthographic')
-    s().setProjection('perspective')
-
-    s().finishProjectionTransition('orthographic')
-
-    expect(s().projection).toBe('perspective')
-    expect(s().projectionTransitioning).toBe(true)
-  })
-
-  it('目前投影模式 completion 才會清除切換狀態', () => {
-    s().setProjection('orthographic')
-
-    s().finishProjectionTransition('orthographic')
-
-    expect(s().projectionTransitioning).toBe(false)
-  })
-
   it('replaceScene 不覆寫投影模式（比照相機預設，屬於檢視偏好不是場景內容）', () => {
     s().setProjection('orthographic')
     s().replaceScene([], '新專案')
@@ -174,7 +136,6 @@ describe('sceneStore', () => {
     s().setProjection('orthographic')
     s().clearScene()
     expect(s().projection).toBe('perspective')
-    expect(s().projectionTransitioning).toBe(false)
   })
 
   it('尺寸標註模式（關閉／選取物件／全部物件）不進入復原歷史，比照相機預設', () => {

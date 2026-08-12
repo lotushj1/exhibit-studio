@@ -70,7 +70,6 @@ type SceneState = {
   dimensionMode: DimensionMode
   cameraPreset: CameraPresetId
   projection: ProjectionMode
-  projectionTransitioning: boolean
   past: Snapshot[]
   future: Snapshot[]
 
@@ -110,7 +109,6 @@ type SceneState = {
   setDimensionMode: (mode: DimensionMode) => void
   setCameraPreset: (id: CameraPresetId) => void
   setProjection: (mode: ProjectionMode) => void
-  finishProjectionTransition: (mode: ProjectionMode) => void
   undo: () => void
   redo: () => void
   replaceScene: (objects: SceneObject[], projectName: string) => void
@@ -358,7 +356,6 @@ export const useSceneStore = create<SceneState>((set, get) => {
     dimensionMode: 'off',
     cameraPreset: 'hero',
     projection: 'perspective',
-    projectionTransitioning: false,
     past: [],
     future: [],
 
@@ -488,14 +485,7 @@ export const useSceneStore = create<SceneState>((set, get) => {
     // 不是場景內容，不進 `past`/`future`（見上方 `ProjectionMode` 的說明）。
     setProjection(mode) {
       if (get().projection === mode) return
-      set({ projection: mode, projectionTransitioning: true })
-    },
-
-    finishProjectionTransition(mode) {
-      // Canvas 的 onCreated callback 可能來自較早的一次切換；只有它捕獲的
-      // 模式仍是目前模式時，才允許把切換中狀態清掉。
-      if (get().projection !== mode) return
-      set({ projectionTransitioning: false })
+      set({ projection: mode })
     },
 
     undo() {
@@ -548,7 +538,6 @@ export const useSceneStore = create<SceneState>((set, get) => {
         dimensionMode: 'off',
         cameraPreset: 'hero',
         projection: 'perspective',
-        projectionTransitioning: false,
         past: [],
         future: [],
       })

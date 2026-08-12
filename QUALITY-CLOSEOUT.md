@@ -22,8 +22,14 @@
 
 兩輪工具方向均未在時限內回傳 foreground gate 或有效樣本，因此沒有可信毫秒數，也不能由背景分頁或不完整樣本推估場景／貼圖數量與成本的關聯。依 fail-closed 規則，不重試已失敗的量測方向。
 
-### UX fallback
+### 當時的 UX fallback（已被後續改善取代）
 
-保留正交／透視切換時以 `key={projection}` 重建 Canvas/WebGL context 的既有架構，沒有改成單 Canvas 或手動相機。切換期間顯示「切換投影中…」狀態提示；新 Canvas 完成兩個 `requestAnimationFrame` 且提示至少可見約 300ms 後才清除，且快速連切時舊模式 completion 不會覆蓋目前模式。
+階段 3 當時保留以 `key={projection}` 重建 Canvas/WebGL context 的架構，並以「切換投影中…」提示遮住重建期間。這是當時在量測受阻後採用的 fallback，不是目前實作。
 
 未來若要取得重量測，應在真人前景 Chrome 重新通過 production、visibility、focus、rAF 與 WebGL draw gates，再記錄可重現的樣本。
+
+### 後續改善（2026-08-12）
+
+目前已改為在同一個 Canvas 內交換透視與正交相機，不再銷毀 WebGL context，也不再需要切換遮罩。Production 頁面實測切換前後皆維持單一 Canvas，兩種投影都能正常渲染。
+
+貼圖清理也改為同時檢查目前場景、undo 與 redo 歷史。只有三者都不再參照的資產才會自動移除；啟動清理只處理原本從 IndexedDB 載入的資產，不會誤刪同期間剛上傳、尚未貼到物件的新圖片。

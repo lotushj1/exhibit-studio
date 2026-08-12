@@ -40,10 +40,8 @@ function lerpZoom(from: number, to: number, k: number): number {
  * 理由跟原本 `fov` 的補間一樣：否則位置花 0.6 秒平滑移動，畫面卻在第一幀
  * 突然放大/縮小，看起來會有一下突兀的跳動。
  *
- * `Viewport.tsx` 用 `key={projection}` 讓正交／透視切換時整個 Canvas
- * （相機、`controls`）重新掛載，所以這裡不需要另外處理「同一顆相機物件
- * 中途換種類」的情況——每次這個元件掛載時，`camera` 本來就已經是這次
- * 該有的種類。
+ * `ProjectionCamera` 會在同一個 Canvas 內交換相機物件；`camera` 因此會在
+ * 投影切換時變更身分，這個 effect 會以新相機的姿態重新起算同一段補間。
  */
 export function CameraRig() {
   const { camera, scene, controls, size } = useThree()

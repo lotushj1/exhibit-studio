@@ -8,8 +8,8 @@ import { useTextureStore } from '../materials/textureStore'
  * 這個檔案，`loadAll()` 都只會被呼叫這一次，兩邊拿到的是同一個 Promise
  * ——不受 React.StrictMode 對 effect／render 重複呼叫的影響。
  *
- * `App.tsx` 的啟動流程（`loadSavedScene()` → 等這個 Promise → 清孤兒貼圖
- * `pruneOrphanedTextureAssets()`，見 Finding 5）依賴這裡匯出的 Promise 來
- * 知道「貼圖何時載完」，藉此保證清孤兒一定在貼圖與場景都就緒之後才跑。
+ * `App.tsx` 以這個 Promise 等待貼圖載入完成，再依場景還原與儲存層狀態
+ * 決定是否清理啟動時既有的孤兒資產。Promise 的結果只包含這次從 IndexedDB
+ * 讀到的 id，不包含等待期間由使用者新上傳的資產，讓清理不會誤刪未附加的圖。
  */
-export const texturesReady: Promise<void> = useTextureStore.getState().loadAll()
+export const texturesReady: Promise<ReadonlySet<string>> = useTextureStore.getState().loadAll()

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   serializeScene, deserializeScene, SCENE_VERSION, SCENE_STORAGE_KEY, startAutoSave,
   pruneOrphanedTextureAssets, loadSavedScene, shouldPruneAfterLoad,
+  pruneLoadedTextureAssetsAfterLoad,
 } from './persistence'
 import { createObject } from '../objects/registry'
 import { useSceneStore } from './sceneStore'
@@ -177,6 +178,36 @@ describe('shouldPruneAfterLoad（Residual 1：抽成純函式的清理條件）'
   })
 })
 
+describe('pruneLoadedTextureAssetsAfterLoad：啟動清理只處理本次 IDB 載入的資產', () => {
+  beforeEach(() => {
+    useSceneStore.getState().clearScene()
+    useTextureStore.setState({ assets: {} })
+  })
+
+  it('場景還原成功且儲存可用時，只清掉 loaded IDs，保留等待期間新上傳的資產', async () => {
+    const loaded = { id: 'loaded-startup', name: 'loaded.png', widthPx: 10, heightPx: 10, blob: new Blob() }
+    const uploaded = { id: 'uploaded-startup', name: 'uploaded.png', widthPx: 10, heightPx: 10, blob: new Blob() }
+    useTextureStore.setState({ assets: { [loaded.id]: loaded, [uploaded.id]: uploaded } })
+
+    expect(pruneLoadedTextureAssetsAfterLoad(true, true, new Set([loaded.id]))).toBe(true)
+    await Promise.resolve()
+
+    expect(useTextureStore.getState().assets[loaded.id]).toBeUndefined()
+    expect(useTextureStore.getState().assets[uploaded.id]).toBeDefined()
+  })
+
+  it('任一啟動安全閘門不成立時不清理 loaded IDs', async () => {
+    const loaded = { id: 'gated-startup', name: 'gated.png', widthPx: 10, heightPx: 10, blob: new Blob() }
+    useTextureStore.setState({ assets: { [loaded.id]: loaded } })
+
+    expect(pruneLoadedTextureAssetsAfterLoad(false, true, new Set([loaded.id]))).toBe(false)
+    expect(pruneLoadedTextureAssetsAfterLoad(true, false, new Set([loaded.id]))).toBe(false)
+    await Promise.resolve()
+
+    expect(useTextureStore.getState().assets[loaded.id]).toBeDefined()
+  })
+})
+
 describe('loadSavedScene 的回傳值（Residual 1：呼叫端要能分辨「還原成功」與「還原失敗」）', () => {
   let backing: Record<string, string>
 
@@ -268,6 +299,59 @@ describe('pruneOrphanedTextureAssets（Finding 5：開機時清掉沒有任何 s
     pruneOrphanedTextureAssets()
     await Promise.resolve()
     expect(useTextureStore.getState().assets.a).toBeUndefined()
+  })
+
+  it('移除貼圖後，undo 尚可還原時保留資產', async () => {
+    const asset = { id: 'undoable', name: 'undo.png', widthPx: 10, heightPx: 10, blob: new Blob() }
+    useTextureStore.setState({ assets: { undoable: asset } })
+    const id = useSceneStore.getState().addObject('boxPlinth')
+    const texture = { assetId: 'undoable', fit: 'cover' as const, offset: [0, 0] as [number, number], scale: 1, rotation: 0 as const, unlit: false }
+    useSceneStore.getState().setSurface(id, 'front', { texture })
+    useSceneStore.getState().setSurface(id, 'front', { texture: undefined })
+
+    pruneOrphanedTextureAssets()
+    await Promise.resolve()
+
+    expect(useTextureStore.getState().assets.undoable).toBeDefined()
+    useSceneStore.getState().undo()
+    expect(useSceneStore.getState().objects[0].surfaces.front.texture?.assetId).toBe('undoable')
+  })
+
+  it('目前與 past/future 都沒有參照時才清掉資產', async () => {
+    const asset = { id: 'released', name: 'released.png', widthPx: 10, heightPx: 10, blob: new Blob() }
+    useTextureStore.setState({ assets: { released: asset } })
+    const id = useSceneStore.getState().addObject('boxPlinth')
+    useSceneStore.getState().setSurface(id, 'front', {
+      texture: { assetId: 'released', fit: 'cover', offset: [0, 0], scale: 1, rotation: 0, unlit: false },
+    })
+    useSceneStore.getState().setSurface(id, 'front', { texture: undefined })
+
+    // 此時 past 還留著可復原的貼圖參照，不能清掉；換成新場景後歷史也清空。
+    pruneOrphanedTextureAssets()
+    await Promise.resolve()
+    expect(useTextureStore.getState().assets.released).toBeDefined()
+
+    useSceneStore.getState().replaceScene([], '新場景')
+    pruneOrphanedTextureAssets()
+    await Promise.resolve()
+    expect(useTextureStore.getState().assets.released).toBeUndefined()
+  })
+
+  it('clearScene／replaceScene 後仍以目前歷史狀態判斷，不會刪掉仍被引用的資產', async () => {
+    const asset = { id: 'kept', name: 'kept.png', widthPx: 10, heightPx: 10, blob: new Blob() }
+    useTextureStore.setState({ assets: { kept: asset } })
+    const object = createObject('boxPlinth')
+    object.surfaces.front.texture = { assetId: 'kept', fit: 'cover', offset: [0, 0], scale: 1, rotation: 0, unlit: false }
+    useSceneStore.getState().replaceScene([object], '有貼圖')
+
+    pruneOrphanedTextureAssets()
+    await Promise.resolve()
+    expect(useTextureStore.getState().assets.kept).toBeDefined()
+
+    useSceneStore.getState().clearScene()
+    pruneOrphanedTextureAssets()
+    await Promise.resolve()
+    expect(useTextureStore.getState().assets.kept).toBeUndefined()
   })
 })
 
@@ -380,5 +464,118 @@ describe('startAutoSave：分頁關閉/隱藏時補寫節流窗內的變更', ()
 
     expect(windowStub.listenerCount('pagehide')).toBe(0)
     expect(documentStub.listenerCount('visibilitychange')).toBe(0)
+  })
+})
+
+describe('startAutoSave：貼圖資產跟著場景歷史安全清理', () => {
+  let backing: Record<string, string>
+  let windowStub: ReturnType<typeof createEventStub>
+  let documentStub: ReturnType<typeof createEventStub> & { visibilityState: 'visible' | 'hidden' }
+
+  const asset = (id: string) => ({
+    id,
+    name: `${id}.png`,
+    widthPx: 10,
+    heightPx: 10,
+    blob: new Blob(),
+  })
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    useSceneStore.getState().clearScene()
+    useTextureStore.setState({ assets: {} })
+    backing = {}
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => (k in backing ? backing[k] : null),
+      setItem: (k: string, v: string) => {
+        backing[k] = v
+      },
+      removeItem: (k: string) => {
+        delete backing[k]
+      },
+    })
+    windowStub = Object.assign(createEventStub(), {
+      setTimeout: ((fn: () => void, ms: number) => setTimeout(fn, ms)) as unknown as Window['setTimeout'],
+      clearTimeout: ((id: ReturnType<typeof setTimeout>) => clearTimeout(id)) as unknown as Window['clearTimeout'],
+    })
+    vi.stubGlobal('window', windowStub)
+    documentStub = Object.assign(createEventStub(), { visibilityState: 'visible' as const })
+    vi.stubGlobal('document', documentStub)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    useTextureStore.setState({ assets: {} })
+    useSceneStore.getState().clearScene()
+  })
+
+  it('移除貼圖後，past 還能復原，所以 400ms 自動清理仍保留資產', async () => {
+    const stored = asset('undo-auto')
+    useTextureStore.setState({ assets: { [stored.id]: stored } })
+    const object = createObject('boxPlinth')
+    object.surfaces.front.texture = { assetId: stored.id, fit: 'cover', offset: [0, 0], scale: 1, rotation: 0, unlit: false }
+    useSceneStore.getState().replaceScene([object], '有貼圖')
+    const id = useSceneStore.getState().objects[0].id
+    const stop = startAutoSave()
+
+    useSceneStore.getState().setSurface(id, 'front', { texture: undefined })
+    vi.advanceTimersByTime(400)
+    await Promise.resolve()
+
+    expect(useTextureStore.getState().assets[stored.id]).toBeDefined()
+    stop()
+  })
+
+  it('replaceScene 清空 current/past/future 後，400ms 自動清掉孤兒資產', async () => {
+    const stored = asset('replace-auto')
+    useTextureStore.setState({ assets: { [stored.id]: stored } })
+    const object = createObject('boxPlinth')
+    object.surfaces.front.texture = { assetId: stored.id, fit: 'cover', offset: [0, 0], scale: 1, rotation: 0, unlit: false }
+    useSceneStore.getState().replaceScene([object], '有貼圖')
+    const stop = startAutoSave()
+
+    useSceneStore.getState().replaceScene([], '空場景')
+    vi.advanceTimersByTime(400)
+    await Promise.resolve()
+
+    expect(useTextureStore.getState().assets[stored.id]).toBeUndefined()
+    stop()
+  })
+
+  it('新上傳但尚未附加到 surface 的資產，不會在第一次場景變更時被刪除', async () => {
+    const existing = asset('existing-auto')
+    useTextureStore.setState({ assets: { [existing.id]: existing } })
+    const stop = startAutoSave()
+
+    // 模擬使用者在 auto-save 訂閱建立後完成上傳，但尚未呼叫 setSurface。
+    const uploaded = asset('uploaded-pending')
+    useTextureStore.setState({ assets: { [existing.id]: existing, [uploaded.id]: uploaded } })
+    useSceneStore.getState().clearScene()
+    vi.advanceTimersByTime(400)
+    await Promise.resolve()
+
+    expect(useTextureStore.getState().assets[uploaded.id]).toBeDefined()
+    stop()
+  })
+
+  it('IndexedDB 資產在 startAutoSave 之後才載入，第一次場景變更仍可清掉既有孤兒', async () => {
+    const orphan = asset('loaded-after-start')
+    let resolveReady!: (ids: ReadonlySet<string>) => void
+    const texturesReady = new Promise<ReadonlySet<string>>((resolve) => {
+      resolveReady = resolve
+    })
+    const stop = startAutoSave(texturesReady)
+
+    useTextureStore.setState({ assets: { [orphan.id]: orphan } })
+    resolveReady(new Set([orphan.id]))
+    await Promise.resolve()
+
+    useSceneStore.getState().replaceScene([], '第一次載入後變更')
+    vi.advanceTimersByTime(400)
+    await Promise.resolve()
+
+    expect(useTextureStore.getState().assets[orphan.id]).toBeUndefined()
+    stop()
   })
 })

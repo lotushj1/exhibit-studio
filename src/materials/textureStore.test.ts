@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import {
   fitWithinMax,
   validateUpload,
@@ -115,6 +115,8 @@ describe('createTextureBitmap（貼圖垂直翻轉修正）', () => {
     // 上面「縱深防禦」那組刻意依賴 createImageBitmap 不存在的測試
     // （如果它們排到這組後面執行）。
     delete (globalThis as { createImageBitmap?: unknown }).createImageBitmap
+    delete (globalThis as { indexedDB?: unknown }).indexedDB
+    useTextureStore.setState({ assets: {}, storageAvailable: true })
   })
 
   it('呼叫 createImageBitmap 時帶 imageOrientation: flipY', async () => {
@@ -158,5 +160,80 @@ describe('createTextureBitmap（貼圖垂直翻轉修正）', () => {
 
     const flipYCalls = calls.filter((c) => c.options?.imageOrientation === 'flipY')
     expect(flipYCalls).toHaveLength(1)
+  })
+
+  it('loadAll 與 putAsset 同時進行時，保留新上傳 state 並只回傳 IDB 載入的 ids', async () => {
+    const loadedBlob = { type: 'image/png', size: 1000 } as Blob
+    const concurrentBlob = { type: 'image/png', size: 1000 } as Blob
+    const loaded = {
+      id: 'tex_loaded_from_idb',
+      name: 'loaded.png',
+      widthPx: 10,
+      heightPx: 10,
+      blob: loadedBlob,
+    }
+    const concurrent = {
+      id: 'tex_uploaded_during_load',
+      name: 'uploaded.png',
+      widthPx: 10,
+      heightPx: 10,
+      blob: concurrentBlob,
+    }
+    const loadedBitmap = { width: 10, height: 10, close: () => {} } as unknown as ImageBitmap
+    const concurrentBitmap = { width: 10, height: 10, close: () => {} } as unknown as ImageBitmap
+    let releaseLoaded!: (bitmap: ImageBitmap) => void
+    const loadedDecode = new Promise<ImageBitmap>((resolve) => {
+      releaseLoaded = resolve
+    })
+
+    ;(globalThis as { createImageBitmap?: unknown }).createImageBitmap = (input: unknown) =>
+      input === loadedBlob ? loadedDecode : Promise.resolve(concurrentBitmap)
+
+    const store = {
+      getAll: () => ({ result: [loaded] }),
+      put: () => ({ result: undefined }),
+      delete: () => ({ result: undefined }),
+    }
+    const db = {
+      objectStoreNames: { contains: () => true },
+      transaction: () => {
+        const tx: {
+          objectStore: () => typeof store
+          oncomplete?: () => void
+          onerror?: () => void
+        } = {
+          objectStore: () => store,
+        }
+        queueMicrotask(() => tx.oncomplete?.())
+        return tx
+      },
+      close: () => {},
+    }
+    const request: {
+      result: typeof db
+      onupgradeneeded?: () => void
+      onsuccess?: () => void
+      onerror?: () => void
+      onblocked?: () => void
+    } = { result: db }
+    vi.stubGlobal('indexedDB', {
+      open: () => {
+        queueMicrotask(() => request.onsuccess?.())
+        return request
+      },
+    })
+
+    useTextureStore.setState({ assets: {}, storageAvailable: true })
+    const loadPromise = useTextureStore.getState().loadAll()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    await useTextureStore.getState().putAsset(concurrent)
+    releaseLoaded(loadedBitmap)
+    const loadedIds = await loadPromise
+
+    expect([...loadedIds]).toEqual([loaded.id])
+    expect(useTextureStore.getState().assets[loaded.id]).toBeDefined()
+    expect(useTextureStore.getState().assets[concurrent.id]).toBe(concurrent)
   })
 })

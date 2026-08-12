@@ -196,7 +196,8 @@ type TextureState = {
   getTexture: (assetId: string) => THREE.Texture | undefined
   putAsset: (asset: TextureAsset) => Promise<void>
   removeAsset: (id: string) => Promise<void>
-  loadAll: () => Promise<void>
+  /** 載入啟動時 IndexedDB 既有資產，回傳本次從儲存層讀到的 id。 */
+  loadAll: () => Promise<ReadonlySet<string>>
 }
 
 export const useTextureStore = create<TextureState>((set, get) => ({
@@ -258,17 +259,30 @@ export const useTextureStore = create<TextureState>((set, get) => ({
       stored = await idbGetAll()
     } catch {
       set({ storageAvailable: false })
-      return
+      return new Set<string>()
     }
+    const loadedIds = new Set(stored.map((asset) => asset.id))
     const assets: Record<string, TextureAsset> = {}
     for (const asset of stored) {
       assets[asset.id] = asset
       try {
-        setCachedTexture(asset.id, makeTexture(await createTextureBitmap(asset.blob)))
+        const texture = makeTexture(await createTextureBitmap(asset.blob))
+        // `putAsset` 可能在這次 IDB 讀取尚未完成時先寫入同一個 id。若它
+        // 已經發布了自己的快取，保留那份較新的 texture，避免 loadAll
+        // 回來時把同期間的上傳結果蓋掉。
+        if (!get().assets[asset.id] || !textureCache.has(asset.id)) {
+          setCachedTexture(asset.id, texture)
+        } else {
+          disposeTexture(texture)
+        }
       } catch {
         // 單一貼圖解碼失敗不影響其他貼圖
       }
     }
-    set({ assets })
+    // 使用目前 state 合併，而不是直接覆寫，保留 loadAll 等待期間由
+    // `putAsset` 發布的新資產。新資產不會出現在 loadedIds，因此上層的
+    // 啟動清理不會把尚未附加到 surface 的上傳誤判成孤兒。
+    set((state) => ({ assets: { ...assets, ...state.assets } }))
+    return loadedIds
   },
 }))

@@ -13,7 +13,7 @@ npm ci
 npm run dev
 ```
 
-請先閱讀 [README](./README.md) 的操作與已知限制。場景儲存在瀏覽器 `localStorage`、貼圖儲存在 IndexedDB；目前沒有後端上傳或遙測流程，請不要把使用者資料、`.env` 檔或密鑰提交到儲存庫。
+請先閱讀 [README](./README.md) 的操作與目前限制，再看[開發文件](./docs/DEVELOPMENT.md)的專案結構、存檔與驗證細節。場景儲存在瀏覽器 `localStorage`、貼圖儲存在 IndexedDB；目前沒有後端上傳或遙測流程，請不要把使用者資料、`.env` 檔或密鑰提交到儲存庫。
 
 ## 修改與驗證
 

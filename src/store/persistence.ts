@@ -142,32 +142,40 @@ export function deserializeScene(rawText: string): { objects: SceneObject[]; pro
   }
 }
 
-/**
- * 清掉沒有被任何面參照的貼圖資產（Finding 5）：目前介面上「移除貼圖」只
- * 把 `surfaces[id].texture` 設成 `undefined`，資產本身仍留在 `assets`／
- * `textureCache`／IndexedDB 裡，永遠不會被回收，開機時 `loadAll()` 又會把
- * 每一筆都解碼成 `ImageBitmap`，長期使用下開機時間與記憶體隨「歷來上傳
- * 總量」而非目前場景大小成長。
- *
- * **只能在開機時呼叫一次**，且必須在場景**確實從存檔還原成功**
- * （`loadSavedScene()` 回傳 `true`）之後才能呼叫（Residual 1）：呼叫端
- * 沒有分辨「還原成功」與「還原失敗（存檔壞掉／版本不符／沒有存檔）」
- * 兩種情況時，`usedIds` 在失敗時會是空集合，這裡的迴圈會把所有資產都
- * 當孤兒清掉，造成不可逆的資料遺失。呼叫端見 `App.tsx`。
- * 編輯過程中不能呼叫——使用者刪除貼圖後可能按 Cmd+Z 復原，這時 asset 已經
- * 沒有任何 surface 參照它，但復原需要它還在；只在開機時掃一次，把成長限制
- * 在單一 session 內，同時不會誤刪「剛被移除、還沒存檔的」貼圖背後的復原
- * 需求。
- */
-export function pruneOrphanedTextureAssets(): void {
+/** 收集目前場景與所有 undo／redo 快照仍可能恢復的貼圖參照。 */
+function referencedTextureAssetIds(): Set<string> {
+  const state = useSceneStore.getState()
   const usedIds = new Set<string>()
-  for (const object of useSceneStore.getState().objects) {
-    for (const surface of Object.values(object.surfaces)) {
-      if (surface.texture) usedIds.add(surface.texture.assetId)
+  const snapshots = [
+    { objects: state.objects },
+    ...state.past,
+    ...state.future,
+  ]
+  for (const snapshot of snapshots) {
+    for (const object of snapshot.objects) {
+      for (const surface of Object.values(object.surfaces)) {
+        if (surface.texture) usedIds.add(surface.texture.assetId)
+      }
     }
   }
+  return usedIds
+}
+
+/**
+ * 清掉目前場景與復原歷史都不再參照的貼圖資產。
+ *
+ * `assetIds` 是自動清理路徑傳入的變更前資產清單。限定掃描這份清單可
+ * 避免使用者上傳圖片後、尚未把它附加到 surface 前，剛好遇到
+ * `clearScene`／`replaceScene` 的節流回呼而被誤刪。手動呼叫不傳參數時
+ * 會掃描目前全部資產，方便啟動清理與單元測試。
+ */
+export function pruneOrphanedTextureAssets(assetIds?: ReadonlySet<string>): void {
+  const usedIds = new Set<string>()
+  for (const id of referencedTextureAssetIds()) usedIds.add(id)
   const { assets, removeAsset } = useTextureStore.getState()
-  for (const id of Object.keys(assets)) {
+  const candidates = assetIds ?? new Set(Object.keys(assets))
+  for (const id of candidates) {
+    if (!assets[id]) continue
     if (!usedIds.has(id)) void removeAsset(id)
   }
 }
@@ -186,6 +194,20 @@ export function pruneOrphanedTextureAssets(): void {
  */
 export function shouldPruneAfterLoad(sceneRestored: boolean, textureStorageAvailable: boolean): boolean {
   return sceneRestored && textureStorageAvailable
+}
+
+/**
+ * 啟動時只清理由 IndexedDB 載入的既有資產，並套用場景／儲存層安全閘門。
+ * 回傳是否實際排程清理，方便啟動流程與測試明確區分「跳過」與「已處理」。
+ */
+export function pruneLoadedTextureAssetsAfterLoad(
+  sceneRestored: boolean,
+  textureStorageAvailable: boolean,
+  loadedAssetIds: ReadonlySet<string>,
+): boolean {
+  if (!shouldPruneAfterLoad(sceneRestored, textureStorageAvailable)) return false
+  pruneOrphanedTextureAssets(loadedAssetIds)
+  return true
 }
 
 /**
@@ -219,8 +241,26 @@ export function loadSavedScene(): boolean {
 }
 
 /** 訂閱場景變動並節流寫入 localStorage。回傳取消訂閱函式。 */
-export function startAutoSave(): () => void {
+export function startAutoSave(initialAssetIds?: Promise<ReadonlySet<string>>): () => void {
   let timer: number | undefined
+  let knownAssetIds = new Set(Object.keys(useTextureStore.getState().assets))
+  let pendingPruneCandidates: Set<string> | null = null
+  let disposed = false
+
+  // 啟動時 IndexedDB 載入是非同步的；先訂閱場景變更仍可立即儲存，
+  // 等 Promise 完成後再把「啟動前已存在」的 id 補進候選集合。清理用的
+  // Promise callback 會在 startAutoSave 建立後才執行，第一個載入完成後的
+  // scene change 因而不會漏掉這批既有資產。
+  void initialAssetIds?.then(
+    (loadedIds) => {
+      if (disposed) return
+      for (const id of loadedIds) knownAssetIds.add(id)
+    },
+    () => {
+      // `loadAll` 目前會把儲存層錯誤轉成空集合；這裡仍防禦性吞掉
+      // 未來實作變更可能拋出的 rejection，不能讓自動儲存造成未處理錯誤。
+    },
+  )
 
   const writeNow = () => {
     const state = useSceneStore.getState()
@@ -231,11 +271,29 @@ export function startAutoSave(): () => void {
     }
   }
 
-  const unsubscribe = useSceneStore.subscribe(() => {
+  const unsubscribe = useSceneStore.subscribe((state, previous) => {
+    const sceneChanged = !(
+      state.objects === previous.objects &&
+      state.past === previous.past &&
+      state.future === previous.future
+    )
+
+    if (sceneChanged) {
+      // 只掃描這次場景變更前就存在的資產。新上傳／匯入的資產會在下一次
+      // 場景變更時才進入候選，給 UI 把 assetId 寫進 surface 的完整非同步流程
+      // 留出安全窗口。
+      const assetsAtChange = new Set(Object.keys(useTextureStore.getState().assets))
+      pendingPruneCandidates = new Set([...assetsAtChange].filter((id) => knownAssetIds.has(id)))
+      knownAssetIds = assetsAtChange
+    }
     if (timer !== undefined) clearTimeout(timer)
     timer = window.setTimeout(() => {
       timer = undefined
       writeNow()
+      if (pendingPruneCandidates) {
+        pruneOrphanedTextureAssets(pendingPruneCandidates)
+        pendingPruneCandidates = null
+      }
     }, 400)
   })
 
@@ -251,6 +309,10 @@ export function startAutoSave(): () => void {
     clearTimeout(timer)
     timer = undefined
     writeNow()
+    if (pendingPruneCandidates) {
+      pruneOrphanedTextureAssets(pendingPruneCandidates)
+      pendingPruneCandidates = null
+    }
   }
 
   const onVisibilityChange = () => {
@@ -264,6 +326,7 @@ export function startAutoSave(): () => void {
   document.addEventListener('visibilitychange', onVisibilityChange)
 
   return () => {
+    disposed = true
     if (timer !== undefined) clearTimeout(timer)
     unsubscribe()
     window.removeEventListener('pagehide', flush)
