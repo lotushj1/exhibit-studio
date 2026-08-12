@@ -10,6 +10,20 @@
 - `src/store/persistence.ts`：localStorage 自動儲存、存檔對帳與貼圖資產清理。
 - `src/store/projectFile.ts`：單檔 JSON 專案匯出／匯入與內嵌貼圖。
 - `src/materials/textureStore.ts`：IndexedDB 貼圖資產與 GPU texture cache。
+- `src/presets/`：不含貼圖的常見場景範本 metadata、builder、佈局邊界 helper 與單元測試。
+
+## 新增場景範本
+
+新增範本時，先在 `src/presets/index.ts` 補上 immutable metadata，再以現有
+`createObject(kind)` 建立每一個物件。builder 只覆蓋 registry 已宣告的參數與
+surface，讓完整 defaults、合法材質與未來 schema 變更仍由物件 registry 管理；不要
+手動拼出物件 id、params 或貼圖資料。位置要保持在地面上、彼此不穿入，若物件放在
+櫃面上則讓上下邊界相接而非重疊。
+
+每個範本至少測試 metadata、物件種類／數量、參數範圍、surface key、有限 transform、
+唯一且可重建的 id，以及 `footprintOverlap`。同一範本連續建立時，測試物件與巢狀資料
+皆為獨立參考；未知 id 應安全回傳 `null`。純 UI 決策（例如是否需要取代確認與成功
+文案）也放在同一組 Node 可執行的單元測試，避免為此引入 jsdom。
 
 ## 物件與 schema
 
