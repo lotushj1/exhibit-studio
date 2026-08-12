@@ -14,6 +14,7 @@ import {
 } from './store/persistence'
 import { texturesReady } from './store/bootstrap'
 import { useTextureStore } from './materials/textureStore'
+import { McpSceneImport } from './ui/McpSceneImport'
 
 export default function App() {
   useKeyboard()
@@ -39,6 +40,7 @@ export default function App() {
   return (
     <Flex direction="column" style={{ height: '100vh' }}>
       <TopBar />
+      <McpSceneImport />
       <StorageWarning />
       <Flex style={{ flex: 1, minHeight: 0 }}>
         <aside style={{ width: 220, borderRight: '1px solid var(--gray-6)', minHeight: 0 }}>

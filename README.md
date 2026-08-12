@@ -43,11 +43,40 @@ Exhibit Studio 採 local-first 設計：場景結構自動存於瀏覽器 `local
 
 要換裝置或分享給同事，使用「專案檔」匯出／匯入單一 JSON；貼圖會一起內嵌，不需要後端帳號或上傳服務。
 
+## MCP（local-first）
+
+Exhibit Studio 內附可由 Claude、Codex、Cursor 等 MCP host 啟動的 stdio server。它在
+MCP connection 內建立／修改場景，`open_scene` 只回傳帶有 v1 project payload 的安全
+深連結；使用者點開後仍要在 App 對話框確認「取代目前場景／清除 undo-redo」才會載入。
+
+```bash
+npm run verify:mcp
+```
+
+不依賴 MCP host 的 `cwd` 時，可在 Claude 或其他支援 `mcpServers` 的 host 使用這份設定（把路徑換成實際絕對路徑）：
+
+```json
+{
+  "mcpServers": {
+    "exhibit-studio": {
+      "command": "npm",
+      "args": ["--prefix", "/absolute/path/to/exhibit-studio", "run", "mcp"]
+    }
+  }
+}
+```
+
+MCP MVP 不支援貼圖 assets（project payload 的 `assets` 固定為 `[]`）。需要貼圖時，請在
+App 內用專案檔匯入；不要把外部 URL 或任意檔案內容放進 MCP 深連結。完整工具、設定與
+安全邊界請見 [MCP 文件](./docs/MCP.md)。MCP 只會建立場景並交回深連結；使用者在 App
+點開後仍須確認取代目前場景，並不是無提示地遠端接管已開啟頁面。
+
 ## 開發指引
 
 ```bash
 npm test
 npx tsc --noEmit
+npm run typecheck:mcp
 npm run build
 ```
 

@@ -11,6 +11,10 @@
 - `src/store/projectFile.ts`：單檔 JSON 專案匯出／匯入與內嵌貼圖。
 - `src/materials/textureStore.ts`：IndexedDB 貼圖資產與 GPU texture cache。
 - `src/presets/`：不含貼圖的常見場景範本 metadata、builder、佈局邊界 helper 與單元測試。
+- `mcp-server/server.ts`：MCP stdio factory 與 8 個 local-first 場景工具；`mcp-server/tsconfig.json`
+  是獨立 Node typecheck 邊界。
+- `src/store/mcpSceneLink.ts`：MCP v1 UTF-8 base64url 深連結編解碼與 project-file 對帳。
+- `src/ui/McpSceneImport.tsx`：App 端 MCP deep-link confirmation gate。
 
 ## 新增場景範本
 
@@ -56,6 +60,8 @@ surface，讓完整 defaults、合法材質與未來 schema 變更仍由物件 r
 ```bash
 npm test
 npx tsc --noEmit
+npm run typecheck:mcp
+npm run verify:mcp
 npm run build
 git diff --check
 ```
